@@ -1,0 +1,13 @@
+# requirements.txt
+# Dependencias del proyecto Visor CSV de Osciloscopio
+# Instalá con:  pip install -r requirements.txt
+
+pandas>=1.5.0          # Lectura y manipulación de archivos CSV
+matplotlib>=3.6.0      # Graficado de señales
+numpy>=1.23.0          # Cálculo numérico (máximos, mínimos, etc.)
+
+# OPCIONAL — para habilitar drag & drop de archivos:
+# tkinterdnd2>=0.3.0
+# Si querés instalarlo: pip install tkinterdnd2
+# Y en main.py reemplazá tk.Tk() por TkinterDnD.Tk()
+# (el código en gui.py ya lo maneja automáticamente si está instalado)
