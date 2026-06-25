@@ -686,6 +686,8 @@ class AplicacionOsciloscopio:
             "visible":        tk.BooleanVar(value=True),
             "color_override": color,
             "etiqueta":       datos["nombre_archivo"],
+            "escala_var":     tk.DoubleVar(value=1.0),
+            "offset_var":     tk.DoubleVar(value=0.0),
         }
         self._lista_archivos.append(item)
         self._datos = datos   # último cargado = activo
@@ -744,6 +746,8 @@ class AplicacionOsciloscopio:
                     "visible":  item["visible"].get(),
                     "color":    item["color_override"],
                     "etiqueta": item["etiqueta"],
+                    "escala":   item["escala_var"].get(),
+                    "offset":   item["offset_var"].get(),
                 }
                 for item in self._lista_archivos
             ],
@@ -893,7 +897,31 @@ class AplicacionOsciloscopio:
             nombre = "…" + nombre[-26:]
         tk.Label(frame, text=nombre, bg=FONDO, fg=TEXTO_DIMMED,
                  font=("Courier New", 7), anchor="w").pack(
-            fill="x", padx=6, pady=(0, 2))
+            fill="x", padx=6, pady=(0, 1))
+
+        # Fila 3: Escala × y Offset
+        fila_esc = tk.Frame(frame, bg=FONDO)
+        fila_esc.pack(fill="x", padx=4, pady=(0, 1))
+
+        tk.Label(fila_esc, text="×", bg=FONDO, fg=TEXTO_DIMMED,
+                 font=("Courier New", 8), width=2).pack(side="left")
+        sp_esc = ttk.Spinbox(fila_esc, from_=-100.0, to=100.0, increment=0.5,
+                             textvariable=item["escala_var"],
+                             width=5, font=("Courier New", 8),
+                             command=self._redibujar)
+        sp_esc.pack(side="left", padx=2)
+        sp_esc.bind("<Return>",   lambda e: self._redibujar())
+        sp_esc.bind("<FocusOut>", lambda e: self._redibujar())
+
+        tk.Label(fila_esc, text="+", bg=FONDO, fg=TEXTO_DIMMED,
+                 font=("Courier New", 8), width=2).pack(side="left", padx=(4, 0))
+        sp_off = ttk.Spinbox(fila_esc, from_=-999.0, to=999.0, increment=0.5,
+                             textvariable=item["offset_var"],
+                             width=5, font=("Courier New", 8),
+                             command=self._redibujar)
+        sp_off.pack(side="left", padx=2)
+        sp_off.bind("<Return>",   lambda e: self._redibujar())
+        sp_off.bind("<FocusOut>", lambda e: self._redibujar())
 
     def _elegir_color_superposicion(self, item: dict, indice: int):
         """Abre el selector de color para un archivo de la superposición."""

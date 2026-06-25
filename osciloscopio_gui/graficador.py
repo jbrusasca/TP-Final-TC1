@@ -78,6 +78,9 @@ class Graficador:
         self._linea_cy = {1: None, 2: None}
         # Marcadores de intersección (punto sobre la curva)
         self._marker_cx = {1: None, 2: None}
+        # Textos de etiqueta de cursor — se rastrean para poder borrarlos al mover
+        self._texto_cx = {1: None, 2: None}
+        self._texto_cy = {1: None, 2: None}
 
         # Qué cursor está activo para el próximo clic/drag
         # Formato: ("cx", 1), ("cx", 2), ("cy", 1), ("cy", 2), o None
@@ -131,10 +134,23 @@ class Graficador:
     def limpiar_cursores(self):
         """Elimina todos los cursores del gráfico."""
         for n in (1, 2):
-            self._borrar_linea_cx(n)
-            self._borrar_linea_cy(n)
-            self._pos_cx[n] = None
-            self._pos_cy[n] = None
+            # Borrar línea CX
+            for obj in (self._linea_cx[n], self._texto_cx[n], self._marker_cx[n]):
+                if obj is not None:
+                    try: obj.remove()
+                    except Exception: pass
+            self._linea_cx[n]  = None
+            self._texto_cx[n]  = None
+            self._marker_cx[n] = None
+            self._pos_cx[n]    = None
+            # Borrar línea CY
+            for obj in (self._linea_cy[n], self._texto_cy[n]):
+                if obj is not None:
+                    try: obj.remove()
+                    except Exception: pass
+            self._linea_cy[n]  = None
+            self._texto_cy[n]  = None
+            self._pos_cy[n]    = None
         self._notificar()
         self.canvas.draw_idle()
 
@@ -155,6 +171,8 @@ class Graficador:
             self._linea_cx[n] = None
             self._linea_cy[n] = None
             self._marker_cx[n] = None
+            self._texto_cx[n]  = None
+            self._texto_cy[n]  = None
 
         self._datos  = datos
         self._config = config
@@ -220,7 +238,12 @@ class Graficador:
             nodo       = datos.get("nombre_nodo", "")
             label_g    = f"{etiqueta}" + (f" [{nodo}]" if nodo else "")
 
-            self.eje.plot(frecuencia, ganancia,
+            # Escala y offset por archivo (útil para ajustar referencias)
+            escala_file = item.get("escala", 1.0)
+            offset_file = item.get("offset", 0.0)
+            ganancia_adj = [g * escala_file + offset_file for g in ganancia]
+
+            self.eje.plot(frecuencia, ganancia_adj,
                           color=color, linewidth=1.8, label=label_g)
 
             if fase and eje_fase:
@@ -287,11 +310,12 @@ class Graficador:
             ft       = datos["factor_tiempo"]
             fv       = datos["factor_tension"]
             tiempo   = [t * ft for t in datos["tiempo"]]
+            # Escala y offset por archivo (configurados en el panel de superposición)
+            escala_file = item.get("escala", 1.0)
+            offset_file = item.get("offset", 0.0)
 
             for j, (nombre, valores_raw) in enumerate(datos["canales"].items()):
-                escala  = config.get("escala", {}).get(nombre, 1.0)
-                offset  = config.get("offset", {}).get(nombre, 0.0)
-                valores = [v * fv * escala + offset for v in valores_raw]
+                valores = [v * fv * escala_file + offset_file for v in valores_raw]
                 estilo  = estilos[j % len(estilos)]
                 label   = f"{etiqueta} — {nombre}"
                 self.eje.plot(tiempo, valores, color=color,
@@ -610,45 +634,53 @@ class Graficador:
         color = _COLOR_CX[numero]
         # Borrar línea anterior
         if self._linea_cx[numero] is not None:
-            try:
-                self._linea_cx[numero].remove()
-            except Exception:
-                pass
+            try: self._linea_cx[numero].remove()
+            except Exception: pass
+        # Borrar texto anterior (el cartel "CX1"/"CX2")
+        if self._texto_cx[numero] is not None:
+            try: self._texto_cx[numero].remove()
+            except Exception: pass
+            self._texto_cx[numero] = None
         if pos is None:
             self._linea_cx[numero] = None
             return
         linea = self.eje.axvline(x=pos, color=color, linewidth=1.5,
                                   linestyle="--", alpha=0.9, zorder=10)
-        # Etiqueta con número del cursor
+        # Etiqueta con número del cursor — se guarda para poder borrarla al mover
         ymin, ymax = self.eje.get_ylim()
-        self.eje.text(pos, ymax - (ymax - ymin) * 0.04,
+        texto = self.eje.text(pos, ymax - (ymax - ymin) * 0.04,
                       f" CX{numero}", color=color, fontsize=8,
                       va="top", zorder=11,
                       bbox=dict(boxstyle="round,pad=0.1",
                                 facecolor="#1e1e2e", edgecolor=color, alpha=0.8))
         self._linea_cx[numero] = linea
+        self._texto_cx[numero] = texto
 
     def _dibujar_cy(self, numero: int):
         """Dibuja o mueve la línea horizontal del cursor CY."""
         pos = self._pos_cy[numero]
         color = _COLOR_CY[numero]
         if self._linea_cy[numero] is not None:
-            try:
-                self._linea_cy[numero].remove()
-            except Exception:
-                pass
+            try: self._linea_cy[numero].remove()
+            except Exception: pass
+        # Borrar texto anterior
+        if self._texto_cy[numero] is not None:
+            try: self._texto_cy[numero].remove()
+            except Exception: pass
+            self._texto_cy[numero] = None
         if pos is None:
             self._linea_cy[numero] = None
             return
         linea = self.eje.axhline(y=pos, color=color, linewidth=1.5,
                                   linestyle="--", alpha=0.9, zorder=10)
         xmin, xmax = self.eje.get_xlim()
-        self.eje.text(xmin + (xmax - xmin) * 0.01, pos,
+        texto = self.eje.text(xmin + (xmax - xmin) * 0.01, pos,
                       f" CY{numero}", color=color, fontsize=8,
                       va="bottom", zorder=11,
                       bbox=dict(boxstyle="round,pad=0.1",
                                 facecolor="#1e1e2e", edgecolor=color, alpha=0.8))
         self._linea_cy[numero] = linea
+        self._texto_cy[numero] = texto
 
     def _actualizar_marcadores(self):
         """Dibuja el punto de intersección entre CX y la señal asignada."""
