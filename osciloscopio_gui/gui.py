@@ -68,8 +68,6 @@ class AplicacionOsciloscopio:
 
         # ---- Variables globales ----
         self._var_grilla     = tk.BooleanVar(value=True)
-        self._idx_paso_x     = None
-        self._idx_paso_y     = None
         self._var_log_x      = tk.BooleanVar(value=False)
         self._var_log_y      = tk.BooleanVar(value=False)
         self._var_maxmin     = tk.BooleanVar(value=False)
@@ -89,7 +87,6 @@ class AplicacionOsciloscopio:
         self._lbl_cursor = {}   # se crean en _construir_panel_cursores
 
         self._construir_ui()
-        self._habilitar_drag_drop()
 
     # ================================================================== #
     #  Construcción de la UI                                               #
@@ -154,10 +151,6 @@ class AplicacionOsciloscopio:
                                         bg=FONDO2, fg=TEXTO_DIMMED,
                                         font=("Courier New", 9))
         self._label_archivo.pack(side="left", padx=16)
-
-        tk.Label(barra, text="(o arrastrá y soltá el .csv)",
-                 bg=FONDO2, fg=TEXTO_DIMMED,
-                 font=("Courier New", 8)).pack(side="right", padx=12)
 
     # ------------------------------------------------------------------ #
     #  Panel izquierdo — selector de modo                                  #
@@ -336,6 +329,8 @@ class AplicacionOsciloscopio:
 
     def _construir_panel_bode(self, datos: dict):
         """Panel izquierdo para archivos de Bode."""
+        self._colores = {}
+
         contenido = self._construir_tabs_panel()
         self._modo_panel = "canales"
         self._actualizar_estilo_tabs()
@@ -346,6 +341,35 @@ class AplicacionOsciloscopio:
         frecuencia = datos.get("frecuencia", [])
         ganancia   = datos.get("ganancia_db", [])
         fase       = datos.get("fase_deg", [])
+
+        # ---- Colores de las curvas (editables) ----
+        self._colores["ganancia"] = COLORES_DEFECTO[0]
+        tk.Label(contenido, text="Curvas", bg=FONDO2, fg=ACENTO,
+                 font=("Courier New", 10, "bold")).pack(pady=(10, 4), padx=10, anchor="w")
+
+        fila_g = tk.Frame(contenido, bg=FONDO)
+        fila_g.pack(fill="x", padx=10, pady=(0, 3))
+        btn_g = tk.Button(fila_g, bg=self._colores["ganancia"], width=2, height=1,
+                          relief="flat", cursor="hand2",
+                          command=lambda: self._elegir_color("ganancia"))
+        btn_g.pack(side="left", padx=(4, 6), pady=4)
+        setattr(self, "_btn_color_ganancia", btn_g)
+        tk.Label(fila_g, text="Ganancia (dB)", bg=FONDO, fg=TEXTO,
+                 font=("Courier New", 9)).pack(side="left")
+
+        if fase:
+            self._colores["fase"] = COLORES_DEFECTO[1]
+            fila_f = tk.Frame(contenido, bg=FONDO)
+            fila_f.pack(fill="x", padx=10, pady=(0, 4))
+            btn_f = tk.Button(fila_f, bg=self._colores["fase"], width=2, height=1,
+                              relief="flat", cursor="hand2",
+                              command=lambda: self._elegir_color("fase"))
+            btn_f.pack(side="left", padx=(4, 6), pady=4)
+            setattr(self, "_btn_color_fase", btn_f)
+            tk.Label(fila_f, text="Fase (°)", bg=FONDO, fg=TEXTO,
+                     font=("Courier New", 9)).pack(side="left")
+
+        tk.Frame(contenido, bg=BORDE, height=1).pack(fill="x", padx=10, pady=6)
 
         info_lines = [
             f"Puntos:   {len(frecuencia)}",
@@ -365,8 +389,7 @@ class AplicacionOsciloscopio:
 
         tk.Frame(contenido, bg=BORDE, height=1).pack(fill="x", padx=10, pady=8)
         tk.Label(contenido,
-                 text="— Azul:  Ganancia (dB)\n— Rojo:  Fase (°)\n\n"
-                      "Eje X logarítmico\npor defecto.\n\n"
+                 text="Eje X logarítmico\npor defecto.\n\n"
                       "Usá el tab Cursores\npara medir valores.",
                  bg=FONDO2, fg=TEXTO_DIMMED, font=("Courier New", 8),
                  justify="left").pack(padx=14, pady=4, anchor="w")
@@ -572,36 +595,6 @@ class AplicacionOsciloscopio:
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=(12, 4), pady=10)
 
-        # Grilla X
-        tk.Label(panel, text="Grilla X:", bg=FONDO2, fg=TEXTO_DIMMED,
-                 font=("Courier New", 8)).pack(side="left", padx=(4, 2))
-        tk.Button(panel, text="−", command=lambda: self._ajustar_paso("x", -1),
-                  bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
-                  relief="flat", width=2, font=("Courier New", 9),
-                  cursor="hand2").pack(side="left")
-        self._label_paso_x = tk.Label(panel, text="Auto", bg=BOTON_BG, fg=ACENTO,
-                                       font=("Courier New", 9), width=6, anchor="center")
-        self._label_paso_x.pack(side="left", padx=2)
-        tk.Button(panel, text="+", command=lambda: self._ajustar_paso("x", +1),
-                  bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
-                  relief="flat", width=2, font=("Courier New", 9),
-                  cursor="hand2").pack(side="left")
-
-        # Grilla Y
-        tk.Label(panel, text="Y:", bg=FONDO2, fg=TEXTO_DIMMED,
-                 font=("Courier New", 8)).pack(side="left", padx=(8, 2))
-        tk.Button(panel, text="−", command=lambda: self._ajustar_paso("y", -1),
-                  bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
-                  relief="flat", width=2, font=("Courier New", 9),
-                  cursor="hand2").pack(side="left")
-        self._label_paso_y = tk.Label(panel, text="Auto", bg=BOTON_BG, fg=ACENTO,
-                                       font=("Courier New", 9), width=6, anchor="center")
-        self._label_paso_y.pack(side="left", padx=2)
-        tk.Button(panel, text="+", command=lambda: self._ajustar_paso("y", +1),
-                  bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
-                  relief="flat", width=2, font=("Courier New", 9),
-                  cursor="hand2").pack(side="left")
-
         tk.Frame(panel, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
 
         # Log X / Y
@@ -731,8 +724,6 @@ class AplicacionOsciloscopio:
             "offset":            {n: v.get() for n, v in self._vars_offset.items()},
             "colores":           dict(self._colores),
             "grilla":            self._var_grilla.get(),
-            "paso_grilla_x":     _paso_desde_indice(self._idx_paso_x, "x"),
-            "paso_grilla_y":     _paso_desde_indice(self._idx_paso_y, "y"),
             "eje_x_log":         self._var_log_x.get(),
             "eje_y_log":         self._var_log_y.get(),
             "mostrar_maxmin":    self._var_maxmin.get(),
@@ -753,32 +744,6 @@ class AplicacionOsciloscopio:
             ],
         }
         self._graficador.actualizar(self._datos, config)
-
-    # ================================================================== #
-    #  Grilla paso +/-                                                     #
-    # ================================================================== #
-
-    def _ajustar_paso(self, eje: str, direccion: int):
-        pasos = _pasos_grilla(eje)
-        n = len(pasos)
-        idx = self._idx_paso_x if eje == "x" else self._idx_paso_y
-
-        if idx is None:
-            nuevo = 0 if direccion == 1 else None
-        else:
-            nuevo = idx + direccion
-            if nuevo < 0:
-                nuevo = None
-            elif nuevo >= n:
-                nuevo = n - 1
-
-        if eje == "x":
-            self._idx_paso_x = nuevo
-            self._label_paso_x.config(text=_label_paso(nuevo, pasos))
-        else:
-            self._idx_paso_y = nuevo
-            self._label_paso_y.config(text=_label_paso(nuevo, pasos))
-        self._redibujar()
 
     # ================================================================== #
     #  Color de canal                                                      #
@@ -977,45 +942,4 @@ class AplicacionOsciloscopio:
             self._graficador.guardar_figura(ruta)
             messagebox.showinfo("Guardado", f"Imagen guardada en:\n{ruta}")
 
-    # ================================================================== #
-    #  Drag & Drop                                                         #
-    # ================================================================== #
 
-    def _habilitar_drag_drop(self):
-        try:
-            from tkinterdnd2 import DND_FILES
-            self.root.drop_target_register(DND_FILES)
-            self.root.dnd_bind("<<Drop>>", self._on_drop)
-        except Exception:
-            pass
-
-    def _on_drop(self, evento):
-        ruta = evento.data.strip()
-        if ruta.startswith("{") and ruta.endswith("}"):
-            ruta = ruta[1:-1]
-        ruta = ruta.split("} {")[0].strip("{}")
-        self._cargar_csv(ruta)
-
-
-# ------------------------------------------------------------------ #
-#  Helpers de grilla                                                   #
-# ------------------------------------------------------------------ #
-
-_PASOS_X = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,
-             1,2,5,10,20,50,100,200,500,1000]
-_PASOS_Y = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,
-             1,2,5,10,20,50,100]
-
-def _pasos_grilla(eje: str) -> list:
-    return _PASOS_X if eje == "x" else _PASOS_Y
-
-def _paso_desde_indice(idx, eje: str):
-    if idx is None:
-        return None
-    return _pasos_grilla(eje)[idx]
-
-def _label_paso(idx, pasos: list) -> str:
-    if idx is None:
-        return "Auto"
-    v = pasos[idx]
-    return str(int(v)) if v >= 1 and v == int(v) else str(v)

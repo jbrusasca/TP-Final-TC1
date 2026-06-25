@@ -94,6 +94,12 @@ class Graficador:
         self._datos = None
         self._config = None
 
+        # Eje secundario (twinx) usado en los diagramas de Bode para la
+        # fase. Los eventos de mouse pueden llegar con evento.inaxes
+        # apuntando a este eje en vez de al principal, así que hay que
+        # tenerlo en cuenta al procesar clics/drag de cursores.
+        self._eje_secundario = None
+
         # Estado del drag
         self._dragging = False
         self._drag_start_x = None
@@ -173,6 +179,7 @@ class Graficador:
             self._marker_cx[n] = None
             self._texto_cx[n]  = None
             self._texto_cy[n]  = None
+        self._eje_secundario = None
 
         self._datos  = datos
         self._config = config
@@ -225,6 +232,7 @@ class Graficador:
             eje_fase.tick_params(axis="y", colors=COLOR_EJES, labelcolor=COLOR_EJES)
             for spine in eje_fase.spines.values():
                 spine.set_edgecolor("#555577")
+            self._eje_secundario = eje_fase
 
         for item in lista:
             if not item["visible"]:
@@ -355,8 +363,8 @@ class Graficador:
             if ax is not self.eje:
                 ax.remove()
 
-        color_gan  = COLORES_DEFECTO[0]
-        color_fase = COLORES_DEFECTO[1]
+        color_gan  = config.get("colores", {}).get("ganancia", COLORES_DEFECTO[0])
+        color_fase = config.get("colores", {}).get("fase", COLORES_DEFECTO[1])
         COLOR_EJES = "white"
 
         label_gan = f"Ganancia — {nombre_nodo}" if nombre_nodo else "Ganancia (dB)"
@@ -400,6 +408,7 @@ class Graficador:
             for ref in [0, -90, -180]:
                 eje_fase.axhline(ref, color=color_fase, linewidth=0.5,
                                  linestyle=":", alpha=0.35)
+            self._eje_secundario = eje_fase
 
         usar_log_x = config.get("eje_x_log", True)
         self.eje.set_xscale("log" if usar_log_x else "linear")
@@ -476,16 +485,8 @@ class Graficador:
         self.figura.tight_layout()
 
         if config.get("grilla", True):
-            paso_x = config.get("paso_grilla_x")
-            paso_y = config.get("paso_grilla_y")
-            if paso_x:
-                self.eje.xaxis.set_major_locator(ticker.MultipleLocator(paso_x))
-            else:
-                self.eje.xaxis.set_major_locator(ticker.AutoLocator())
-            if paso_y:
-                self.eje.yaxis.set_major_locator(ticker.MultipleLocator(paso_y))
-            else:
-                self.eje.yaxis.set_major_locator(ticker.AutoLocator())
+            self.eje.xaxis.set_major_locator(ticker.AutoLocator())
+            self.eje.yaxis.set_major_locator(ticker.AutoLocator())
             self.eje.grid(True, color="#444466", linestyle="--", linewidth=0.6)
         else:
             self.eje.xaxis.set_major_locator(ticker.AutoLocator())
@@ -562,15 +563,43 @@ class Graficador:
     #  SISTEMA DE CURSORES                                                 #
     # ================================================================== #
 
+    def _ejes_validos(self) -> list:
+        """Devuelve los ejes (Axes) sobre los que se pueden colocar cursores."""
+        ejes = [self.eje]
+        if self._eje_secundario is not None:
+            ejes.append(self._eje_secundario)
+        return ejes
+
+    def _coords_evento(self, evento):
+        """
+        Traduce la posición de un evento de mouse a coordenadas de datos
+        del eje PRINCIPAL (self.eje), sin importar si el evento llegó desde
+        self.eje o desde el eje secundario (twinx, usado para la fase en
+        los diagramas de Bode). Ambos ejes comparten el mismo espacio en
+        pantalla, así que se puede convertir usando las coordenadas de
+        pixel del evento.
+        """
+        if evento.inaxes is self.eje:
+            return evento.xdata, evento.ydata
+        if evento.inaxes is self._eje_secundario and evento.x is not None and evento.y is not None:
+            try:
+                x, y = self.eje.transData.inverted().transform((evento.x, evento.y))
+                return float(x), float(y)
+            except Exception:
+                return None, None
+        return None, None
+
     def _on_press(self, evento):
         """Clic del mouse: inicia colocación o drag del cursor activo."""
-        if evento.inaxes != self.eje or self._cursor_activo is None:
+        if evento.inaxes not in self._ejes_validos() or self._cursor_activo is None:
             return
         if evento.button != 1:
             return
 
         tipo, numero = self._cursor_activo
-        x, y = evento.xdata, evento.ydata
+        x, y = self._coords_evento(evento)
+        if x is None or y is None:
+            return
 
         # Ver si el clic está cerca de un cursor existente → drag
         if self._cerca_de_cursor(tipo, numero, x, y):
@@ -589,12 +618,12 @@ class Graficador:
 
     def _on_motion(self, evento):
         """Movimiento del mouse con botón apretado: arrastra el cursor."""
-        if not self._dragging or evento.inaxes != self.eje:
+        if not self._dragging or evento.inaxes not in self._ejes_validos():
             return
         if self._cursor_activo is None:
             return
         tipo, numero = self._cursor_activo
-        x, y = evento.xdata, evento.ydata
+        x, y = self._coords_evento(evento)
         if x is None or y is None:
             return
         self._mover_cursor(tipo, numero, x, y)
