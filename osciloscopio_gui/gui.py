@@ -37,10 +37,10 @@ BOTON_BG     = "#313244"
 BOTON_HOVER  = "#45475a"
 
 # Colores de cursores (deben coincidir con graficador.py)
-COLOR_CX1 = "#FFFF00"
-COLOR_CX2 = "#FF9900"
-COLOR_CY1 = "#00FFCC"
-COLOR_CY2 = "#FF44FF"
+COLOR_CX1 = "#C99700"
+COLOR_CX2 = "#E8590C"
+COLOR_CY1 = "#00897B"
+COLOR_CY2 = "#D6336C"
 
 
 class AplicacionOsciloscopio:
@@ -74,6 +74,13 @@ class AplicacionOsciloscopio:
         self._var_modo_xy    = tk.BooleanVar(value=False)
         self._var_canal_x_xy = tk.StringVar(value="")
         self._var_canal_y_xy = tk.StringVar(value="")
+
+        # ---- Título del gráfico (editable; vacío = sin título) ----
+        self._var_titulo         = tk.StringVar(value="")
+        self._var_mostrar_titulo = tk.BooleanVar(value=True)
+
+        # ---- Nombres editables de las curvas: {canal: StringVar} ----
+        self._vars_etiquetas = {}
 
         # ---- Estado del modo del panel izquierdo ----
         # "canales" o "cursores"
@@ -133,6 +140,11 @@ class AplicacionOsciloscopio:
                   font=("Courier New", 10), cursor="hand2").pack(side="left", padx=8, pady=8)
 
         tk.Button(barra, text="💾  Guardar PNG", command=self._guardar_png,
+                  bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
+                  activeforeground=TEXTO, relief="flat", padx=14, pady=6,
+                  font=("Courier New", 10), cursor="hand2").pack(side="left", padx=4, pady=8)
+
+        tk.Button(barra, text="📄  Guardar PDF", command=self._guardar_pdf,
                   bg=BOTON_BG, fg=TEXTO, activebackground=BOTON_HOVER,
                   activeforeground=TEXTO, relief="flat", padx=14, pady=6,
                   font=("Courier New", 10), cursor="hand2").pack(side="left", padx=4, pady=8)
@@ -216,13 +228,54 @@ class AplicacionOsciloscopio:
 
     def _cambiar_tab(self, modo: str):
         self._modo_panel = modo
-        self._actualizar_estilo_tabs()
-        for w in self._frame_contenido_panel.winfo_children():
-            w.destroy()
-        if modo == "canales":
-            self._poblar_tab_canales(self._frame_contenido_panel)
-        else:
+        if modo == "cursores":
+            self._actualizar_estilo_tabs()
+            for w in self._frame_contenido_panel.winfo_children():
+                w.destroy()
             self._poblar_tab_cursores(self._frame_contenido_panel)
+            return
+        # Al volver a "Canales" se reconstruye el panel que corresponde al
+        # archivo cargado (canales, bode o superposición). Las variables de
+        # cada curva se conservan, así no se pierde lo que el usuario configuró.
+        self._reconstruir_panel_izquierdo()
+
+    def _reconstruir_panel_izquierdo(self):
+        """Arma el panel izquierdo según lo que haya cargado en ese momento."""
+        if self._datos is None:
+            self._mostrar_panel_vacio()
+            return
+        if len(self._lista_archivos) > 1:
+            self._construir_panel_superposicion()
+            return
+        if self._datos.get("formato", "tiempo") in (FORMATO_AUTOBODE, FORMATO_LTSPICE):
+            self._construir_panel_bode(self._datos)
+        else:
+            self._construir_panel_canales(list(self._datos["canales"].keys()))
+
+    def _sincronizar_vars_curvas(self, claves: list, etiquetas: dict = None,
+                                 colores: dict = None):
+        """
+        Deja listas las variables de cada curva (visibilidad, escala, offset,
+        nombre y color) para las claves indicadas.
+
+        Las que ya existen se conservan —así reconstruir el panel no borra lo
+        que el usuario configuró— y las de curvas que ya no están se descartan.
+        """
+        etiquetas = etiquetas or {}
+        colores   = colores or {}
+        for dic in (self._vars_visibles, self._vars_escala, self._vars_offset,
+                    self._vars_etiquetas, self._colores):
+            for clave in list(dic):
+                if clave not in claves:
+                    del dic[clave]
+        for i, clave in enumerate(claves):
+            self._colores.setdefault(
+                clave, colores.get(clave, COLORES_DEFECTO[i % len(COLORES_DEFECTO)]))
+            self._vars_visibles.setdefault(clave,  tk.BooleanVar(value=True))
+            self._vars_escala.setdefault(clave,    tk.DoubleVar(value=1.0))
+            self._vars_offset.setdefault(clave,    tk.DoubleVar(value=0.0))
+            self._vars_etiquetas.setdefault(
+                clave, tk.StringVar(value=etiquetas.get(clave, clave)))
 
     # ------------------------------------------------------------------ #
     #  Tab CANALES                                                          #
@@ -230,10 +283,8 @@ class AplicacionOsciloscopio:
 
     def _construir_panel_canales(self, nombres_canales: list):
         """Reconstruye el panel izquierdo con tabs para un CSV de señales."""
-        self._vars_visibles = {}
-        self._vars_escala   = {}
-        self._vars_offset   = {}
-        self._colores       = {}
+        # Las variables se preparan antes de dibujar los bloques, que las usan
+        self._sincronizar_vars_curvas(nombres_canales)
 
         contenido = self._construir_tabs_panel()
         self._modo_panel = "canales"
@@ -244,13 +295,6 @@ class AplicacionOsciloscopio:
         self._nombres_canales_actuales = nombres_canales
         for n in (1, 2):
             self._var_canal_cx[n].set(nombres_canales[0] if nombres_canales else "—")
-
-        # Inicializar vars de canal
-        for i, nombre in enumerate(nombres_canales):
-            self._colores[nombre]       = COLORES_DEFECTO[i % len(COLORES_DEFECTO)]
-            self._vars_visibles[nombre] = tk.BooleanVar(value=True)
-            self._vars_escala[nombre]   = tk.DoubleVar(value=1.0)
-            self._vars_offset[nombre]   = tk.DoubleVar(value=0.0)
 
         # Actualizar menús de Lissajous
         self._var_canal_x_xy.set(nombres_canales[0])
@@ -299,6 +343,18 @@ class AplicacionOsciloscopio:
                        activebackground=FONDO, font=("Courier New", 9, "bold"),
                        command=self._redibujar).pack(side="left")
 
+        # Fila 1b: nombre con el que aparece la curva en la leyenda
+        fila_nom = tk.Frame(frame, bg=FONDO)
+        fila_nom.pack(fill="x", padx=6, pady=2)
+        tk.Label(fila_nom, text="Nombre", bg=FONDO, fg=TEXTO_DIMMED,
+                 font=("Courier New", 8), width=8, anchor="w").pack(side="left")
+        ent_nom = tk.Entry(fila_nom, textvariable=self._vars_etiquetas[nombre],
+                           bg=FONDO2, fg=TEXTO, insertbackground=TEXTO,
+                           relief="flat", font=("Courier New", 9), width=14)
+        ent_nom.pack(side="left", padx=4, ipady=2)
+        ent_nom.bind("<Return>",   lambda e: self._redibujar())
+        ent_nom.bind("<FocusOut>", lambda e: self._redibujar())
+
         # Fila 2: escala
         fila2 = tk.Frame(frame, bg=FONDO)
         fila2.pack(fill="x", padx=6, pady=2)
@@ -329,45 +385,39 @@ class AplicacionOsciloscopio:
 
     def _construir_panel_bode(self, datos: dict):
         """Panel izquierdo para archivos de Bode."""
-        self._colores = {}
-
         contenido = self._construir_tabs_panel()
         self._modo_panel = "canales"
         self._actualizar_estilo_tabs()
 
         # Guardar canales de bode para los cursores
-        self._nombres_canales_actuales = ["ganancia", "fase"]
+        self._nombres_canales_actuales = ["ganancia"]
+        if datos.get("fase_deg"):
+            self._nombres_canales_actuales.append("fase")
 
         frecuencia = datos.get("frecuencia", [])
         ganancia   = datos.get("ganancia_db", [])
         fase       = datos.get("fase_deg", [])
 
-        # ---- Colores de las curvas (editables) ----
-        self._colores["ganancia"] = COLORES_DEFECTO[0]
+        # ---- Curvas: color, activar/desactivar y nombre editable ----
+        # En los Bode de LTSpice el nombre del nodo va en la leyenda
+        nodo = datos.get("nombre_nodo", "")
+        etq_ganancia = f"Ganancia — {nodo}" if nodo else "Ganancia (dB)"
+
+        #        clave       texto del checkbox   nombre inicial de la curva
+        curvas = [("ganancia", "Ganancia (dB)", etq_ganancia, COLORES_DEFECTO[0])]
+        if fase:
+            curvas.append(("fase", "Fase (°)", "Fase (°)", COLORES_DEFECTO[1]))
+
         tk.Label(contenido, text="Curvas", bg=FONDO2, fg=ACENTO,
                  font=("Courier New", 10, "bold")).pack(pady=(10, 4), padx=10, anchor="w")
 
-        fila_g = tk.Frame(contenido, bg=FONDO)
-        fila_g.pack(fill="x", padx=10, pady=(0, 3))
-        btn_g = tk.Button(fila_g, bg=self._colores["ganancia"], width=2, height=1,
-                          relief="flat", cursor="hand2",
-                          command=lambda: self._elegir_color("ganancia"))
-        btn_g.pack(side="left", padx=(4, 6), pady=4)
-        setattr(self, "_btn_color_ganancia", btn_g)
-        tk.Label(fila_g, text="Ganancia (dB)", bg=FONDO, fg=TEXTO,
-                 font=("Courier New", 9)).pack(side="left")
-
-        if fase:
-            self._colores["fase"] = COLORES_DEFECTO[1]
-            fila_f = tk.Frame(contenido, bg=FONDO)
-            fila_f.pack(fill="x", padx=10, pady=(0, 4))
-            btn_f = tk.Button(fila_f, bg=self._colores["fase"], width=2, height=1,
-                              relief="flat", cursor="hand2",
-                              command=lambda: self._elegir_color("fase"))
-            btn_f.pack(side="left", padx=(4, 6), pady=4)
-            setattr(self, "_btn_color_fase", btn_f)
-            tk.Label(fila_f, text="Fase (°)", bg=FONDO, fg=TEXTO,
-                     font=("Courier New", 9)).pack(side="left")
+        self._sincronizar_vars_curvas(
+            [c[0] for c in curvas],
+            etiquetas={c[0]: c[2] for c in curvas},
+            colores={c[0]: c[3] for c in curvas},
+        )
+        for clave, texto_check, _etiqueta_inicial, _color in curvas:
+            self._crear_bloque_curva_bode(contenido, clave, texto_check)
 
         tk.Frame(contenido, bg=BORDE, height=1).pack(fill="x", padx=10, pady=6)
 
@@ -397,6 +447,41 @@ class AplicacionOsciloscopio:
         # Cursores de bode usan "ganancia" y "fase" como canales
         for n in (1, 2):
             self._var_canal_cx[n].set("ganancia")
+
+    def _crear_bloque_curva_bode(self, parent, clave: str, nombre_visible: str):
+        """
+        Bloque de una curva del Bode (ganancia o fase) con:
+        cuadrado de color, checkbox para mostrarla/ocultarla y nombre editable.
+        """
+        frame = tk.Frame(parent, bg=FONDO, highlightbackground=BORDE,
+                         highlightthickness=1)
+        frame.pack(fill="x", padx=8, pady=4, ipady=3)
+
+        fila1 = tk.Frame(frame, bg=FONDO)
+        fila1.pack(fill="x", padx=6, pady=(4, 2))
+
+        btn = tk.Button(fila1, bg=self._colores[clave], width=2, height=1,
+                        relief="flat", cursor="hand2",
+                        command=lambda c=clave: self._elegir_color(c))
+        btn.pack(side="left", padx=(0, 6))
+        setattr(self, f"_btn_color_{clave}", btn)
+
+        tk.Checkbutton(fila1, text=nombre_visible,
+                       variable=self._vars_visibles[clave],
+                       bg=FONDO, fg=TEXTO, selectcolor=FONDO2,
+                       activebackground=FONDO, font=("Courier New", 9, "bold"),
+                       command=self._redibujar).pack(side="left")
+
+        fila2 = tk.Frame(frame, bg=FONDO)
+        fila2.pack(fill="x", padx=6, pady=(0, 4))
+        tk.Label(fila2, text="Nombre", bg=FONDO, fg=TEXTO_DIMMED,
+                 font=("Courier New", 8), width=8, anchor="w").pack(side="left")
+        ent = tk.Entry(fila2, textvariable=self._vars_etiquetas[clave],
+                       bg=FONDO2, fg=TEXTO, insertbackground=TEXTO,
+                       relief="flat", font=("Courier New", 9), width=14)
+        ent.pack(side="left", padx=4, ipady=2)
+        ent.bind("<Return>",   lambda e: self._redibujar())
+        ent.bind("<FocusOut>", lambda e: self._redibujar())
 
     # ------------------------------------------------------------------ #
     #  Tab CURSORES                                                         #
@@ -585,61 +670,84 @@ class AplicacionOsciloscopio:
     # ------------------------------------------------------------------ #
 
     def _construir_panel_opciones(self, parent):
-        panel = tk.Frame(parent, bg=FONDO2, height=70)
+        panel = tk.Frame(parent, bg=FONDO2, height=104)
         panel.pack(fill="x", pady=(6, 0))
         panel.pack_propagate(False)
 
+        # Fila 1: opciones de graficado
+        fila1 = tk.Frame(panel, bg=FONDO2)
+        fila1.pack(fill="x")
+
         # Grilla
-        tk.Checkbutton(panel, text="Grilla", variable=self._var_grilla,
+        tk.Checkbutton(fila1, text="Grilla", variable=self._var_grilla,
                        bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=(12, 4), pady=10)
 
-        tk.Frame(panel, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
+        tk.Frame(fila1, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
 
         # Log X / Y
-        tk.Checkbutton(panel, text="Log X", variable=self._var_log_x,
+        tk.Checkbutton(fila1, text="Log X", variable=self._var_log_x,
                        bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=4)
-        tk.Checkbutton(panel, text="Log Y", variable=self._var_log_y,
+        tk.Checkbutton(fila1, text="Log Y", variable=self._var_log_y,
                        bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=4)
 
-        tk.Frame(panel, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
+        tk.Frame(fila1, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
 
         # Máx/Mín
-        tk.Checkbutton(panel, text="Marcar Máx/Mín", variable=self._var_maxmin,
+        tk.Checkbutton(fila1, text="Marcar Máx/Mín", variable=self._var_maxmin,
                        bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=4)
 
-        tk.Frame(panel, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
+        tk.Frame(fila1, bg=BORDE, width=1).pack(side="left", fill="y", padx=10, pady=6)
 
         # Modo XY
-        tk.Checkbutton(panel, text="Modo XY", variable=self._var_modo_xy,
+        tk.Checkbutton(fila1, text="Modo XY", variable=self._var_modo_xy,
                        bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
                        activebackground=FONDO2, font=("Courier New", 9),
                        command=self._redibujar).pack(side="left", padx=4)
-        tk.Label(panel, text="X:", bg=FONDO2, fg=TEXTO_DIMMED,
+        tk.Label(fila1, text="X:", bg=FONDO2, fg=TEXTO_DIMMED,
                  font=("Courier New", 8)).pack(side="left")
-        self._menu_canal_x = tk.OptionMenu(panel, self._var_canal_x_xy, "")
+        self._menu_canal_x = tk.OptionMenu(fila1, self._var_canal_x_xy, "")
         self._menu_canal_x.config(bg=BOTON_BG, fg=TEXTO, relief="flat",
                                    activebackground=BOTON_HOVER, font=("Courier New", 8))
         self._menu_canal_x.pack(side="left", padx=2)
-        tk.Label(panel, text="Y:", bg=FONDO2, fg=TEXTO_DIMMED,
+        tk.Label(fila1, text="Y:", bg=FONDO2, fg=TEXTO_DIMMED,
                  font=("Courier New", 8)).pack(side="left")
-        self._menu_canal_y = tk.OptionMenu(panel, self._var_canal_y_xy, "")
+        self._menu_canal_y = tk.OptionMenu(fila1, self._var_canal_y_xy, "")
         self._menu_canal_y.config(bg=BOTON_BG, fg=TEXTO, relief="flat",
                                    activebackground=BOTON_HOVER, font=("Courier New", 8))
         self._menu_canal_y.pack(side="left", padx=2)
 
         # Botón actualizar
-        tk.Button(panel, text="↺ Actualizar", command=self._redibujar,
+        tk.Button(fila1, text="↺ Actualizar", command=self._redibujar,
                   bg=ACENTO, fg="#ffffff", activebackground="#9999ff",
                   relief="flat", padx=10, pady=4,
                   font=("Courier New", 9), cursor="hand2").pack(side="right", padx=12, pady=10)
+
+        # Fila 2: título del gráfico (editable y ocultable)
+        fila2 = tk.Frame(panel, bg=FONDO2)
+        fila2.pack(fill="x")
+
+        tk.Checkbutton(fila2, text="Título:", variable=self._var_mostrar_titulo,
+                       bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
+                       activebackground=FONDO2, font=("Courier New", 9),
+                       command=self._redibujar).pack(side="left", padx=(12, 2))
+
+        entrada_titulo = tk.Entry(fila2, textvariable=self._var_titulo,
+                                  bg=FONDO, fg=TEXTO, insertbackground=TEXTO,
+                                  relief="flat", font=("Courier New", 9))
+        entrada_titulo.pack(side="left", padx=4, ipady=3, fill="x", expand=True)
+        entrada_titulo.bind("<Return>",   lambda e: self._redibujar())
+        entrada_titulo.bind("<FocusOut>", lambda e: self._redibujar())
+
+        tk.Label(fila2, text="(vacío = sin título)", bg=FONDO2, fg=TEXTO_DIMMED,
+                 font=("Courier New", 8)).pack(side="left", padx=(4, 12))
 
     # ================================================================== #
     #  Apertura de archivos                                                #
@@ -665,10 +773,13 @@ class AplicacionOsciloscopio:
         if not agregar:
             # Modo normal: limpiar lista y cargar solo este archivo
             self._lista_archivos.clear()
-            self._vars_visibles = {}
-            self._vars_escala   = {}
-            self._vars_offset   = {}
-            self._colores       = {}
+            self._vars_visibles  = {}
+            self._vars_escala    = {}
+            self._vars_offset    = {}
+            self._vars_etiquetas = {}
+            self._colores        = {}
+            # El título es del gráfico anterior: se arranca sin título
+            self._var_titulo.set("")
 
         # Asignar color automático según posición en la lista
         idx_color = len(self._lista_archivos) % len(COLORES_DEFECTO)
@@ -679,6 +790,9 @@ class AplicacionOsciloscopio:
             "visible":        tk.BooleanVar(value=True),
             "color_override": color,
             "etiqueta":       datos["nombre_archivo"],
+            # Nombre editable con el que el archivo aparece en la leyenda
+            "etiqueta_var":   tk.StringVar(value=os.path.splitext(
+                                  datos["nombre_archivo"])[0]),
             "escala_var":     tk.DoubleVar(value=1.0),
             "offset_var":     tk.DoubleVar(value=0.0),
         }
@@ -730,13 +844,16 @@ class AplicacionOsciloscopio:
             "modo_xy":           self._var_modo_xy.get(),
             "canal_x_lissajous": self._var_canal_x_xy.get(),
             "canal_y_lissajous": self._var_canal_y_xy.get(),
+            "titulo":            self._var_titulo.get(),
+            "mostrar_titulo":    self._var_mostrar_titulo.get(),
+            "etiquetas":         {n: v.get() for n, v in self._vars_etiquetas.items()},
             # Superposición: lista de todos los archivos cargados
             "lista_archivos":    [
                 {
                     "datos":    item["datos"],
                     "visible":  item["visible"].get(),
                     "color":    item["color_override"],
-                    "etiqueta": item["etiqueta"],
+                    "etiqueta": item["etiqueta_var"].get() or item["etiqueta"],
                     "escala":   item["escala_var"].get(),
                     "offset":   item["offset_var"].get(),
                 }
@@ -785,10 +902,12 @@ class AplicacionOsciloscopio:
         """Elimina todos los archivos cargados."""
         self._lista_archivos.clear()
         self._datos = None
-        self._vars_visibles = {}
-        self._vars_escala   = {}
-        self._vars_offset   = {}
-        self._colores       = {}
+        self._vars_visibles  = {}
+        self._vars_escala    = {}
+        self._vars_offset    = {}
+        self._vars_etiquetas = {}
+        self._colores        = {}
+        self._var_titulo.set("")
         self._mostrar_panel_vacio()
         self._label_archivo.config(text="Ningún archivo cargado", fg=TEXTO_DIMMED)
         self._graficador.eje.cla()
@@ -803,6 +922,25 @@ class AplicacionOsciloscopio:
         contenido = self._construir_tabs_panel()
         self._modo_panel = "canales"
         self._actualizar_estilo_tabs()
+
+        # Si son Bodes, se pueden activar/desactivar ganancia y fase globalmente;
+        # los canales de un archivo suelto no aplican en este modo.
+        formato = (self._datos or {}).get("formato", "tiempo")
+        es_bode = formato in (FORMATO_AUTOBODE, FORMATO_LTSPICE)
+        self._sincronizar_vars_curvas(["ganancia", "fase"] if es_bode else [])
+
+        if es_bode:
+            tk.Label(contenido, text="Curvas", bg=FONDO2, fg=ACENTO,
+                     font=("Courier New", 10, "bold")).pack(pady=(10, 2), padx=10,
+                                                            anchor="w")
+            fila_curvas = tk.Frame(contenido, bg=FONDO2)
+            fila_curvas.pack(fill="x", padx=10, pady=(0, 4))
+            for clave, texto in [("ganancia", "Ganancia"), ("fase", "Fase")]:
+                tk.Checkbutton(fila_curvas, text=texto,
+                               variable=self._vars_visibles[clave],
+                               bg=FONDO2, fg=TEXTO, selectcolor=FONDO,
+                               activebackground=FONDO2, font=("Courier New", 9),
+                               command=self._redibujar).pack(side="left", padx=(0, 8))
 
         tk.Label(contenido, text="Archivos superpuestos",
                  bg=FONDO2, fg=ACENTO,
@@ -856,13 +994,13 @@ class AplicacionOsciloscopio:
             command=lambda idx=indice: self._eliminar_archivo(idx),
         ).pack(side="right", padx=2)
 
-        # Fila 2: nombre del archivo (truncado)
-        nombre = item["etiqueta"]
-        if len(nombre) > 28:
-            nombre = "…" + nombre[-26:]
-        tk.Label(frame, text=nombre, bg=FONDO, fg=TEXTO_DIMMED,
-                 font=("Courier New", 7), anchor="w").pack(
-            fill="x", padx=6, pady=(0, 1))
+        # Fila 2: nombre con el que la curva aparece en la leyenda (editable)
+        ent_nom = tk.Entry(frame, textvariable=item["etiqueta_var"],
+                           bg=FONDO2, fg=TEXTO, insertbackground=TEXTO,
+                           relief="flat", font=("Courier New", 8))
+        ent_nom.pack(fill="x", padx=6, pady=(0, 2), ipady=2)
+        ent_nom.bind("<Return>",   lambda e: self._redibujar())
+        ent_nom.bind("<FocusOut>", lambda e: self._redibujar())
 
         # Fila 3: Escala × y Offset
         fila_esc = tk.Frame(frame, bg=FONDO)
@@ -926,20 +1064,57 @@ class AplicacionOsciloscopio:
         self._redibujar()
 
     # ================================================================== #
-    #  Guardar PNG                                                         #
+    #  Guardar / exportar el gráfico                                       #
     # ================================================================== #
 
+    def _nombre_sugerido(self, extension: str) -> str:
+        """Nombre por defecto para el archivo exportado, con la extensión dada."""
+        base = os.path.splitext(self._datos["nombre_archivo"])[0]
+        return base + extension
+
     def _guardar_png(self):
+        """Exporta el gráfico como imagen de mapa de bits (PNG, 300 dpi)."""
+        self._exportar(
+            extension=".png",
+            filetypes=[("PNG", "*.png"), ("Todos", "*.*")],
+            titulo="Guardar gráfico como PNG",
+        )
+
+    def _guardar_pdf(self):
+        """
+        Exporta el gráfico en formato vectorial (PDF por defecto, SVG opcional).
+        Al ser vectorial no pierde resolución al insertarlo en un informe, ni
+        al ampliarlo o imprimirlo.
+        """
+        self._exportar(
+            extension=".pdf",
+            filetypes=[("PDF (vectorial)", "*.pdf"), ("SVG (vectorial)", "*.svg"),
+                       ("Todos", "*.*")],
+            titulo="Guardar gráfico como PDF",
+        )
+
+    def _exportar(self, extension: str, filetypes: list, titulo: str):
+        """Lógica común de exportación: pide la ruta y guarda la figura."""
         if self._datos is None:
             messagebox.showinfo("Sin datos", "Primero cargá un archivo CSV.")
             return
         ruta = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG", "*.png"), ("Todos", "*.*")],
-            initialfile=self._datos["nombre_archivo"].replace(".csv", ".png"),
+            title=titulo,
+            defaultextension=extension,
+            filetypes=filetypes,
+            initialfile=self._nombre_sugerido(extension),
         )
-        if ruta:
+        if not ruta:
+            return
+        # Si el usuario escribió el nombre sin extensión, se usa la del botón.
+        if not os.path.splitext(ruta)[1]:
+            ruta += extension
+        try:
             self._graficador.guardar_figura(ruta)
-            messagebox.showinfo("Guardado", f"Imagen guardada en:\n{ruta}")
+        except Exception as e:
+            messagebox.showerror("Error al guardar",
+                                 f"No se pudo guardar el archivo:\n{e}")
+            return
+        messagebox.showinfo("Guardado", f"Gráfico guardado en:\n{ruta}")
 
 

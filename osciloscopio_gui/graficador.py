@@ -23,6 +23,12 @@ Hay 4 cursores disponibles: CX1, CX2 (verticales) y CY1, CY2 (horizontales).
 import matplotlib
 matplotlib.use("TkAgg")
 
+# Texto vectorial en las exportaciones (TrueType embebido en el PDF y texto
+# real en el SVG) para que los informes no pierdan resolución.
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"]  = 42
+matplotlib.rcParams["svg.fonttype"] = "none"
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.ticker as ticker
@@ -30,6 +36,15 @@ import numpy as np
 
 from lector_csv import FORMATO_TIEMPO, FORMATO_AUTOBODE, FORMATO_LTSPICE
 
+
+# ------------------------------------------------------------------ #
+#  Paleta del gráfico (tema claro, pensado para informes impresos)     #
+# ------------------------------------------------------------------ #
+COLOR_FONDO_FIG = "#ffffff"   # fondo de la figura completa
+COLOR_FONDO_EJE = "#ffffff"   # fondo del área de ploteo (y de la leyenda)
+COLOR_TEXTO     = "#1a1a1a"   # títulos, ejes, ticks y etiquetas
+COLOR_BORDE     = "#555555"   # bordes (spines) y borde de la leyenda
+COLOR_GRILLA    = "#c0c0c0"   # líneas de grilla y referencias auxiliares
 
 COLORES_DEFECTO = [
     "#2196F3",  # azul
@@ -43,8 +58,8 @@ COLORES_DEFECTO = [
 ]
 
 # Colores fijos para cada cursor
-_COLOR_CX = {1: "#FFFF00", 2: "#FF9900"}   # CX1 amarillo, CX2 naranja
-_COLOR_CY = {1: "#00FFCC", 2: "#FF44FF"}   # CY1 cian, CY2 magenta
+_COLOR_CX = {1: "#C99700", 2: "#E8590C"}   # CX1 ámbar, CX2 naranja
+_COLOR_CY = {1: "#00897B", 2: "#D6336C"}   # CY1 verde azulado, CY2 magenta
 
 
 class Graficador:
@@ -56,8 +71,8 @@ class Graficador:
 
     def __init__(self, frame_padre):
         self.figura, self.eje = plt.subplots(figsize=(10, 5))
-        self.figura.patch.set_facecolor("#1e1e2e")
-        self.eje.set_facecolor("#2a2a3e")
+        self.figura.patch.set_facecolor(COLOR_FONDO_FIG)
+        self.eje.set_facecolor(COLOR_FONDO_EJE)
 
         self.canvas = FigureCanvasTkAgg(self.figura, master=frame_padre)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -113,6 +128,32 @@ class Graficador:
     # ================================================================== #
     #  API pública                                                         #
     # ================================================================== #
+
+    def _aplicar_titulo(self, config: dict):
+        """
+        Pone (o saca) el título del gráfico según lo que haya elegido el usuario.
+
+        config['titulo']         → texto escrito en la GUI ("" = sin título)
+        config['mostrar_titulo'] → False oculta el título sin borrar el texto
+
+        Ya no se usa el nombre del archivo como título automático: si el campo
+        está vacío el gráfico sale sin título, que es lo cómodo para pegarlo en
+        un informe donde el epígrafe va aparte.
+        """
+        if not config.get("mostrar_titulo", True):
+            self.eje.set_title("")
+            return
+        titulo = str(config.get("titulo") or "").strip()
+        self.eje.set_title(titulo, color=COLOR_TEXTO, fontsize=12)
+
+    def _etiqueta(self, config: dict, nombre: str) -> str:
+        """
+        Nombre con el que se muestra una curva en la leyenda.
+        Si el usuario le puso un nombre propio se usa ese; si no, el nombre
+        original del canal.
+        """
+        etiqueta = str(config.get("etiquetas", {}).get(nombre, "") or "").strip()
+        return etiqueta or nombre
 
     def set_cursor_activo(self, tipo: str, numero: int):
         """
@@ -219,19 +260,24 @@ class Graficador:
             if ax is not self.eje:
                 ax.remove()
 
-        COLOR_EJES = "white"
+        COLOR_EJES = COLOR_TEXTO
         usar_log_x = config.get("eje_x_log", True)
 
+        # Curvas activadas desde el panel (por ejemplo, se puede sacar la fase)
+        ver_ganancia = config.get("canales_visibles", {}).get("ganancia", True)
+        ver_fase     = config.get("canales_visibles", {}).get("fase", True)
+
         eje_fase   = None
-        hay_fase   = any(item["datos"].get("fase_deg") for item in lista if item["visible"])
+        hay_fase   = ver_fase and any(item["datos"].get("fase_deg")
+                                      for item in lista if item["visible"])
 
         if hay_fase:
             eje_fase = self.eje.twinx()
-            eje_fase.set_facecolor("#2a2a3e")
+            eje_fase.set_facecolor(COLOR_FONDO_EJE)
             eje_fase.set_ylabel("Fase [°]", color=COLOR_EJES, fontsize=11)
             eje_fase.tick_params(axis="y", colors=COLOR_EJES, labelcolor=COLOR_EJES)
             for spine in eje_fase.spines.values():
-                spine.set_edgecolor("#555577")
+                spine.set_edgecolor(COLOR_BORDE)
             self._eje_secundario = eje_fase
 
         for item in lista:
@@ -243,16 +289,17 @@ class Graficador:
             frecuencia = datos["frecuencia"]
             ganancia   = datos["ganancia_db"]
             fase       = datos.get("fase_deg", [])
-            nodo       = datos.get("nombre_nodo", "")
-            label_g    = f"{etiqueta}" + (f" [{nodo}]" if nodo else "")
+            # La etiqueta es editable desde el panel, así que se usa tal cual
+            label_g    = etiqueta
 
             # Escala y offset por archivo (útil para ajustar referencias)
             escala_file = item.get("escala", 1.0)
             offset_file = item.get("offset", 0.0)
             ganancia_adj = [g * escala_file + offset_file for g in ganancia]
 
-            self.eje.plot(frecuencia, ganancia_adj,
-                          color=color, linewidth=1.8, label=label_g)
+            if ver_ganancia:
+                self.eje.plot(frecuencia, ganancia_adj,
+                              color=color, linewidth=1.8, label=label_g)
 
             if fase and eje_fase:
                 eje_fase.plot(frecuencia, fase,
@@ -265,33 +312,29 @@ class Graficador:
         self.eje.tick_params(axis="y", colors=COLOR_EJES, labelcolor=COLOR_EJES)
         self.eje.tick_params(axis="x", colors=COLOR_EJES, labelcolor=COLOR_EJES)
         for spine in self.eje.spines.values():
-            spine.set_edgecolor("#555577")
-        self.eje.axhline(0, color=COLOR_EJES, linewidth=0.6, linestyle="--", alpha=0.3)
+            spine.set_edgecolor(COLOR_BORDE)
+        self.eje.axhline(0, color=COLOR_EJES, linewidth=0.6, linestyle="--", alpha=0.5)
 
         # Escala X
         self.eje.set_xscale("log" if usar_log_x else "linear")
         if eje_fase:
             eje_fase.set_xscale("log" if usar_log_x else "linear")
             for ref in [0, -90, -180]:
-                eje_fase.axhline(ref, color="#aaaaaa", linewidth=0.4,
-                                 linestyle=":", alpha=0.3)
+                eje_fase.axhline(ref, color=COLOR_GRILLA, linewidth=0.6,
+                                 linestyle=":", alpha=0.9)
 
         if config.get("grilla", True):
-            self.eje.grid(True, which="both", color="#444466",
+            self.eje.grid(True, which="both", color=COLOR_GRILLA,
                           linestyle="--", linewidth=0.6)
 
-        self.eje.set_title(f"Superposición de Bodes ({len([i for i in lista if i['visible']])} activos)",
-                           color=COLOR_EJES, fontsize=12)
+        self._aplicar_titulo(config)
 
         # Leyenda combinada
         l1, lb1 = self.eje.get_legend_handles_labels()
-        if eje_fase:
-            l2, lb2 = eje_fase.get_legend_handles_labels()
+        l2, lb2 = eje_fase.get_legend_handles_labels() if eje_fase else ([], [])
+        if l1 or l2:
             self.eje.legend(l1 + l2, lb1 + lb2,
-                            facecolor="#2a2a3e", edgecolor="#555577",
-                            labelcolor=COLOR_EJES, fontsize=8)
-        else:
-            self.eje.legend(facecolor="#2a2a3e", edgecolor="#555577",
+                            facecolor=COLOR_FONDO_EJE, edgecolor=COLOR_BORDE,
                             labelcolor=COLOR_EJES, fontsize=8)
 
         self.figura.tight_layout()
@@ -331,19 +374,18 @@ class Graficador:
 
         ut = datos["unidad_tiempo"] if lista else "s"
         uv = datos["unidad_tension"] if lista else "V"
-        self.eje.set_xlabel(f"Tiempo [{ut}]",  color="white", fontsize=11)
-        self.eje.set_ylabel(f"Tensión [{uv}]", color="white", fontsize=11)
-        self.eje.set_title(
-            f"Superposición ({len([i for i in lista if i['visible']])} archivos)",
-            color="white", fontsize=12)
-        self.eje.tick_params(colors="white")
+        self.eje.set_xlabel(f"Tiempo [{ut}]",  color=COLOR_TEXTO, fontsize=11)
+        self.eje.set_ylabel(f"Tensión [{uv}]", color=COLOR_TEXTO, fontsize=11)
+        self._aplicar_titulo(config)
+        self.eje.tick_params(colors=COLOR_TEXTO)
         for spine in self.eje.spines.values():
-            spine.set_edgecolor("#555577")
-        self.eje.legend(facecolor="#2a2a3e", edgecolor="#555577",
-                        labelcolor="white", fontsize=8)
+            spine.set_edgecolor(COLOR_BORDE)
+        if self.eje.get_legend_handles_labels()[0]:
+            self.eje.legend(facecolor=COLOR_FONDO_EJE, edgecolor=COLOR_BORDE,
+                            labelcolor=COLOR_TEXTO, fontsize=8)
 
         if config.get("grilla", True):
-            self.eje.grid(True, color="#444466", linestyle="--", linewidth=0.6)
+            self.eje.grid(True, color=COLOR_GRILLA, linestyle="--", linewidth=0.6)
 
         self.figura.tight_layout()
         self.canvas.draw()
@@ -356,7 +398,6 @@ class Graficador:
         frecuencia  = datos["frecuencia"]
         ganancia_db = datos["ganancia_db"]
         fase_deg    = datos["fase_deg"]
-        nombre_arch = datos["nombre_archivo"]
         nombre_nodo = datos.get("nombre_nodo", "")
 
         for ax in self.figura.get_axes():
@@ -365,20 +406,28 @@ class Graficador:
 
         color_gan  = config.get("colores", {}).get("ganancia", COLORES_DEFECTO[0])
         color_fase = config.get("colores", {}).get("fase", COLORES_DEFECTO[1])
-        COLOR_EJES = "white"
+        COLOR_EJES = COLOR_TEXTO
 
-        label_gan = f"Ganancia — {nombre_nodo}" if nombre_nodo else "Ganancia (dB)"
-        self.eje.plot(frecuencia, ganancia_db,
-                      color=color_gan, linewidth=1.8, label=label_gan)
+        # Curvas activadas desde el panel (por ejemplo, se puede sacar la fase)
+        ver_ganancia = config.get("canales_visibles", {}).get("ganancia", True)
+        ver_fase     = config.get("canales_visibles", {}).get("fase", True)
+
+        # Nombre de la curva: el que haya puesto el usuario, o el automático
+        label_gan = self._etiqueta(config, "ganancia")
+        if label_gan == "ganancia":
+            label_gan = f"Ganancia — {nombre_nodo}" if nombre_nodo else "Ganancia (dB)"
+        if ver_ganancia:
+            self.eje.plot(frecuencia, ganancia_db,
+                          color=color_gan, linewidth=1.8, label=label_gan)
         self.eje.set_xlabel("Frecuencia [Hz]", color=COLOR_EJES, fontsize=11)
         self.eje.set_ylabel("Ganancia [dB]",   color=COLOR_EJES, fontsize=11)
         self.eje.tick_params(axis="y", colors=COLOR_EJES, labelcolor=COLOR_EJES)
         self.eje.tick_params(axis="x", colors=COLOR_EJES, labelcolor=COLOR_EJES)
         for spine in self.eje.spines.values():
-            spine.set_edgecolor("#555577")
-        self.eje.axhline(0, color=COLOR_EJES, linewidth=0.6, linestyle="--", alpha=0.35)
+            spine.set_edgecolor(COLOR_BORDE)
+        self.eje.axhline(0, color=COLOR_EJES, linewidth=0.6, linestyle="--", alpha=0.5)
 
-        if config.get("mostrar_maxmin", False) and ganancia_db:
+        if config.get("mostrar_maxmin", False) and ganancia_db and ver_ganancia:
             for idx_fn, etiqueta, marker in [
                 (int(np.argmax(ganancia_db)), "MAX", "^"),
                 (int(np.argmin(ganancia_db)), "MIN", "v"),
@@ -394,20 +443,24 @@ class Graficador:
                     arrowprops=dict(arrowstyle="->", color=color_gan, lw=0.8),
                 )
 
+        label_fase = self._etiqueta(config, "fase")
+        if label_fase == "fase":
+            label_fase = "Fase (°)"
+
         eje_fase = None
-        if fase_deg:
+        if fase_deg and ver_fase:
             eje_fase = self.eje.twinx()
-            eje_fase.set_facecolor("#2a2a3e")
+            eje_fase.set_facecolor(COLOR_FONDO_EJE)
             eje_fase.plot(frecuencia, fase_deg,
                           color=color_fase, linewidth=1.4,
-                          linestyle="--", label="Fase (°)")
+                          linestyle="--", label=label_fase)
             eje_fase.set_ylabel("Fase [°]", color=COLOR_EJES, fontsize=11)
             eje_fase.tick_params(axis="y", colors=COLOR_EJES, labelcolor=COLOR_EJES)
             for spine in eje_fase.spines.values():
-                spine.set_edgecolor("#555577")
+                spine.set_edgecolor(COLOR_BORDE)
             for ref in [0, -90, -180]:
-                eje_fase.axhline(ref, color=color_fase, linewidth=0.5,
-                                 linestyle=":", alpha=0.35)
+                eje_fase.axhline(ref, color=color_fase, linewidth=0.6,
+                                 linestyle=":", alpha=0.5)
             self._eje_secundario = eje_fase
 
         usar_log_x = config.get("eje_x_log", True)
@@ -416,20 +469,17 @@ class Graficador:
             eje_fase.set_xscale("log" if usar_log_x else "linear")
 
         if config.get("grilla", True):
-            self.eje.grid(True, which="both", color="#444466",
+            self.eje.grid(True, which="both", color=COLOR_GRILLA,
                           linestyle="--", linewidth=0.6)
 
-        titulo = f"Bode LTSpice — {nombre_nodo}  |  {nombre_arch}" if nombre_nodo \
-                 else f"Diagrama de Bode — {nombre_arch}"
-        self.eje.set_title(titulo, color=COLOR_EJES, fontsize=12)
+        self._aplicar_titulo(config)
 
         lineas1, labels1 = self.eje.get_legend_handles_labels()
-        if eje_fase:
-            lineas2, labels2 = eje_fase.get_legend_handles_labels()
+        lineas2, labels2 = eje_fase.get_legend_handles_labels() if eje_fase else ([], [])
+        if lineas1 or lineas2:
             self.eje.legend(lineas1 + lineas2, labels1 + labels2,
-                            facecolor="#2a2a3e", edgecolor="#555577", labelcolor=COLOR_EJES)
-        else:
-            self.eje.legend(facecolor="#2a2a3e", edgecolor="#555577", labelcolor=COLOR_EJES)
+                            facecolor=COLOR_FONDO_EJE, edgecolor=COLOR_BORDE,
+                            labelcolor=COLOR_EJES)
 
         self.figura.tight_layout()
         self.canvas.draw()
@@ -449,7 +499,6 @@ class Graficador:
         fv          = datos["factor_tension"]
         ut          = datos["unidad_tiempo"]
         uv          = datos["unidad_tension"]
-        nombre_arch = datos["nombre_archivo"]
 
         tiempo = [t * ft for t in tiempo_raw]
 
@@ -464,18 +513,22 @@ class Graficador:
             offset  = config.get("offset", {}).get(nombre, 0.0)
             valores = [(v * fv * escala) + offset for v in valores_raw]
             color   = config.get("colores", {}).get(nombre, COLORES_DEFECTO[i % len(COLORES_DEFECTO)])
-            self.eje.plot(tiempo, valores, color=color, linewidth=1.2, label=nombre)
+            # Nombre editable de la curva (por defecto, el del canal)
+            self.eje.plot(tiempo, valores, color=color, linewidth=1.2,
+                          label=self._etiqueta(config, nombre))
 
             if config.get("mostrar_maxmin", False):
                 self._marcar_maxmin(tiempo, valores, nombre, color)
 
-        self.eje.set_xlabel(f"Tiempo [{ut}]",  color="white", fontsize=11)
-        self.eje.set_ylabel(f"Tensión [{uv}]", color="white", fontsize=11)
-        self.eje.set_title(f"Osciloscopio — {nombre_arch}", color="white", fontsize=12)
-        self.eje.tick_params(colors="white")
+        self.eje.set_xlabel(f"Tiempo [{ut}]",  color=COLOR_TEXTO, fontsize=11)
+        self.eje.set_ylabel(f"Tensión [{uv}]", color=COLOR_TEXTO, fontsize=11)
+        self._aplicar_titulo(config)
+        self.eje.tick_params(colors=COLOR_TEXTO)
         for spine in self.eje.spines.values():
-            spine.set_edgecolor("#555577")
-        self.eje.legend(facecolor="#2a2a3e", edgecolor="#555577", labelcolor="white")
+            spine.set_edgecolor(COLOR_BORDE)
+        if self.eje.get_legend_handles_labels()[0]:
+            self.eje.legend(facecolor=COLOR_FONDO_EJE, edgecolor=COLOR_BORDE,
+                            labelcolor=COLOR_TEXTO)
 
         if config.get("eje_x_log", False):
             self.eje.set_xscale("log")
@@ -487,7 +540,7 @@ class Graficador:
         if config.get("grilla", True):
             self.eje.xaxis.set_major_locator(ticker.AutoLocator())
             self.eje.yaxis.set_major_locator(ticker.AutoLocator())
-            self.eje.grid(True, color="#444466", linestyle="--", linewidth=0.6)
+            self.eje.grid(True, color=COLOR_GRILLA, linestyle="--", linewidth=0.6)
         else:
             self.eje.xaxis.set_major_locator(ticker.AutoLocator())
             self.eje.yaxis.set_major_locator(ticker.AutoLocator())
@@ -503,7 +556,7 @@ class Graficador:
         nombres = list(canales.keys())
         if len(nombres) < 2:
             self.eje.text(0.5, 0.5, "Se necesitan al menos 2 canales para Lissajous",
-                          ha="center", va="center", color="white",
+                          ha="center", va="center", color=COLOR_TEXTO,
                           transform=self.eje.transAxes)
             self.canvas.draw()
             return
@@ -516,16 +569,20 @@ class Graficador:
         puntos    = np.array([datos_x, datos_y]).T.reshape(-1, 1, 2)
         segmentos = np.concatenate([puntos[:-1], puntos[1:]], axis=1)
         from matplotlib.collections import LineCollection
-        lc = LineCollection(segmentos, colors=plt.cm.plasma(np.linspace(0, 1, len(segmentos))),
+        # Se recorta el tramo final del colormap (amarillo claro) porque sobre
+        # el fondo blanco casi no se ve.
+        lc = LineCollection(segmentos, colors=plt.cm.plasma(np.linspace(0, 0.85, len(segmentos))),
                             linewidth=1.2)
         self.eje.add_collection(lc)
         self.eje.autoscale()
-        self.eje.set_xlabel(f"{nombre_x} [{uv}]", color="white", fontsize=11)
-        self.eje.set_ylabel(f"{nombre_y} [{uv}]", color="white", fontsize=11)
-        self.eje.set_title(f"Lissajous — {nombre_x} vs {nombre_y}", color="white", fontsize=12)
-        self.eje.tick_params(colors="white")
+        self.eje.set_xlabel(f"{self._etiqueta(config, nombre_x)} [{uv}]",
+                            color=COLOR_TEXTO, fontsize=11)
+        self.eje.set_ylabel(f"{self._etiqueta(config, nombre_y)} [{uv}]",
+                            color=COLOR_TEXTO, fontsize=11)
+        self._aplicar_titulo(config)
+        self.eje.tick_params(colors=COLOR_TEXTO)
         for spine in self.eje.spines.values():
-            spine.set_edgecolor("#555577")
+            spine.set_edgecolor(COLOR_BORDE)
         self.figura.tight_layout()
         self.canvas.draw()
 
@@ -555,8 +612,20 @@ class Graficador:
     #  Guardar                                                             #
     # ================================================================== #
 
-    def guardar_figura(self, ruta: str):
-        self.figura.savefig(ruta, dpi=150, bbox_inches="tight",
+    def guardar_figura(self, ruta: str, dpi: int = 300):
+        """
+        Guarda la figura actual en disco.
+
+        El formato sale de la extensión de `ruta`:
+          .png / .jpg          → mapa de bits (se usa `dpi`, por defecto 300)
+          .pdf / .svg / .eps   → vectorial: el gráfico no pierde resolución
+                                 al ampliarlo o imprimirlo en el informe.
+
+        En los formatos vectoriales el `dpi` solo afecta a los elementos que
+        sí son rasterizados (prácticamente ninguno acá), así que el texto y
+        las curvas quedan como vectores.
+        """
+        self.figura.savefig(ruta, dpi=dpi, bbox_inches="tight",
                             facecolor=self.figura.get_facecolor())
 
     # ================================================================== #
@@ -681,7 +750,7 @@ class Graficador:
                       f" CX{numero}", color=color, fontsize=8,
                       va="top", zorder=11,
                       bbox=dict(boxstyle="round,pad=0.1",
-                                facecolor="#1e1e2e", edgecolor=color, alpha=0.8))
+                                facecolor=COLOR_FONDO_FIG, edgecolor=color, alpha=0.8))
         self._linea_cx[numero] = linea
         self._texto_cx[numero] = texto
 
@@ -707,7 +776,7 @@ class Graficador:
                       f" CY{numero}", color=color, fontsize=8,
                       va="bottom", zorder=11,
                       bbox=dict(boxstyle="round,pad=0.1",
-                                facecolor="#1e1e2e", edgecolor=color, alpha=0.8))
+                                facecolor=COLOR_FONDO_FIG, edgecolor=color, alpha=0.8))
         self._linea_cy[numero] = linea
         self._texto_cy[numero] = texto
 
@@ -734,7 +803,7 @@ class Graficador:
             color = _COLOR_CX[n]
             marker, = self.eje.plot(pos_x, y_interp, "o",
                                      color=color, markersize=8,
-                                     markeredgecolor="white", markeredgewidth=0.8,
+                                     markeredgecolor=COLOR_TEXTO, markeredgewidth=0.8,
                                      zorder=12)
             self._marker_cx[n] = marker
 
